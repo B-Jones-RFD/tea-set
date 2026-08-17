@@ -1,0 +1,46 @@
+{
+  "name": "@b-jones-rfd/tea-set",
+  "version": "0.0.1",
+  "description": "TEA implementation utilities",
+  "private": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
+  "scripts": {
+    "build": "tsup",
+    "dev": "vitest",
+    "test": "vitest run",
+    "lint": "tsc",
+    "ci": "pnpm run lint && pnpm run test && pnpm run build",
+    "release": "pnpm run build && pnpm publish -r --no-git-checks"
+  },
+  "keywords": [],
+  "author": "B-Jones-RFD",
+  "license": "Apache-2.0",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.13.0",
+      "onFail": "download"
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/B-Jones-RFD/tea-set.git"
+  },
+  "type": "module",
+  "devDependencies": {
+    "@changesets/cli": "^3.0.0",
+    "@types/node": "^26.2.0",
+    "prettier": "^3.9.6",
+    "tsup": "^8.5.1",
+    "typescript": "6.0.3",
+    "vitest": "^4.1.10"
+  }
+}
