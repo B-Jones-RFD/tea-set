@@ -1,6 +1,6 @@
 {
   "name": "@b-jones-rfd/tea-set",
-  "version": "0.0.2",
+  "version": "1.0.0",
   "description": "TEA implementation utilities",
   "private": false,
   "main": "./dist/index.js",
