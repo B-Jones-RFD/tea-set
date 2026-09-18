@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    // examples/ import each other with `.ts` extensions so Node can run them
+    // directly (`node examples/run.ts`); Node's type stripping does not rewrite
+    // `.js` to `.ts`.
+    "allowImportingTsExtensions": true,
+    // examples/ import the package by name, as a consumer would. At runtime Node
+    // resolves the self-reference through package.json `exports` to dist/; for
+    // type-checking, point it at the source so lint does not depend on a build.
+    "paths": { "tea-set": ["./src/index.ts"] }
+  },
+  "include": ["src", "tests", "examples"]
+}

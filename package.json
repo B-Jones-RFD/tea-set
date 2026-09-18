@@ -1,22 +1,53 @@
 {
   "name": "@b-jones-rfd/tea-set",
   "version": "1.0.0",
-  "description": "TEA implementation utilities",
+  "description": "Utilities for writing programs in The Elm Architecture in TypeScript",
   "private": false,
   "main": "./dist/index.js",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
   "scripts": {
-    "build": "tsup",
+    "build": "tsdown",
+    "examples": "pnpm run build && node examples/run.ts",
     "dev": "vitest",
     "test": "vitest run",
-    "lint": "tsc",
+    "lint": "tsc -p tsconfig.test.json",
     "ci": "pnpm run lint && pnpm run test && pnpm run build",
-    "release": "pnpm run build && pnpm publish -r --no-git-checks"
+    "release": "pnpm run build && pnpm publish --provenance --no-git-checks",
+    "changeset": "changeset",
+    "version": "changeset version"
   },
-  "keywords": [],
+  "keywords": [
+    "elm",
+    "elm-architecture",
+    "tea",
+    "typescript",
+    "state-management",
+    "functional",
+    "cmd",
+    "subscriptions",
+    "maybe",
+    "result",
+    "remote-data"
+  ],
   "author": "B-Jones-RFD",
   "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
@@ -24,23 +55,21 @@
       "onFail": "download"
     }
   },
-  "engines": {
-    "node": ">=24"
-  },
-  "publishConfig": {
-    "access": "public"
+  "type": "module",
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3",
+    "@types/node": "^26.6.1",
+    "prettier": "^3.9.7",
+    "tsdown": "^0.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/B-Jones-RFD/tea-set.git"
   },
-  "type": "module",
-  "devDependencies": {
-    "@changesets/cli": "^3.0.0",
-    "@types/node": "^26.2.0",
-    "prettier": "^3.9.6",
-    "tsup": "^8.5.1",
-    "typescript": "6.0.3",
-    "vitest": "^4.1.10"
+  "homepage": "https://github.com/B-Jones-RFD/tea-set#readme",
+  "bugs": {
+    "url": "https://github.com/B-Jones-RFD/tea-set/issues"
   }
 }

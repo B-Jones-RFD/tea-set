@@ -1,17 +1,49 @@
-// src/index.ts
+// The package's public surface. Re-exports only.
 
+// Types that have no namespace object. `Maybe`, `Result`, `RemoteData`,
+// `Task`, `Cmd` and `Sub` are exported below, each as both a type and a namespace.
 export type {
+  ChildMsg,
+  CmdLeaf,
   Dispatch,
-  EffectHandler,
-  Init,
+  ElementOptions,
+  ErrorContext,
+  ErrorStep,
   Program,
-  SubscriptionHandler,
-  SubscriptionStrategy,
-  Subscriptions,
-  Update,
-  UpdateResult,
+  Running,
+  SubSource,
+  Teardown,
+  Translator,
 } from './types.js'
 
-export { createRuntime } from './createRuntime.js'
+// Namespaces (type + value) and constructors
+export { Maybe, Just, Nothing } from './maybe.js'
+export { Result, Ok, Err, assertNever } from './result.js'
+export {
+  RemoteData,
+  NotAsked,
+  Loading,
+  Failure,
+  Success,
+} from './remote-data.js'
+export { Task } from './task.js'
+export { Cmd } from './cmd.js'
+export { Sub } from './sub.js'
 
-export { none, withEffect, withEffects } from './utils.js'
+// Parent / child composition
+export {
+  Internal,
+  External,
+  raise,
+  translate,
+  delegate,
+  updateChild,
+} from './compose.js'
+export type { UpdateChildOptions } from './compose.js'
+
+// Runtime
+export { element } from './runtime.js'
+
+// Test helpers
+export { flattenCmd, runCmd, CmdError, flattenSubs } from './testing.js'
+export type { RunCmdOptions } from './testing.js'

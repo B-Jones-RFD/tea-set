@@ -1,947 +1,430 @@
-// runtime.test.ts
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { element } from '../src/runtime.js'
+import { Cmd } from '../src/cmd.js'
+import { Sub } from '../src/sub.js'
+import { Task } from '../src/task.js'
+import type {
+  Cmd as CmdType,
+  ErrorContext,
+  Program,
+  Sub as SubType,
+} from '../src/types.js'
 
-import { describe, expect, it, vi } from 'vitest'
+// --- a small counter program used throughout ------------------------------
 
-import {
-  createRuntime,
-  type Dispatch,
-  type EffectHandler,
-  type Program,
-  type SubscriptionHandler,
-  type SubscriptionStrategy,
-  type UpdateResult,
-} from '../src/index.js'
-
-type Model = Readonly<{
-  count: number
-}>
-
+type Model = { count: number; tickMs: number | null; log: string[] }
 type Msg =
-  | { type: 'increment' }
-  | { type: 'decrement' }
-  | { type: 'set'; value: number }
-  | { type: 'effectCompleted'; value: number }
-  | { type: 'subscriptionEvent'; value: number }
-
-type Effect = { type: 'complete'; value: number } | { type: 'noop' }
-
-type Subscription = Readonly<{
-  type: 'test'
-  id: string
-  value: number
-}>
-
-function result(
-  model: Model,
-  effects: readonly Effect[] = []
-): UpdateResult<Model, Effect> {
-  return {
-    model,
-    effects,
-  }
-}
-
-function createProgram(
-  overrides: Partial<Program<Model, Msg, Effect, Subscription>> = {}
-): Program<Model, Msg, Effect, Subscription> {
-  return {
-    init() {
-      return result({
-        count: 0,
-      })
-    },
-
-    update(model, message) {
-      switch (message.type) {
-        case 'increment':
-          return result({
-            count: model.count + 1,
-          })
-
-        case 'decrement':
-          return result({
-            count: model.count - 1,
-          })
-
-        case 'set':
-          return result({
-            count: message.value,
-          })
-
-        case 'effectCompleted':
-          return result({
-            count: message.value,
-          })
-
-        case 'subscriptionEvent':
-          return result({
-            count: message.value,
-          })
-      }
-    },
-
-    runEffect() {},
-
-    ...overrides,
-  }
-}
-
-describe('createRuntime', () => {
-  describe('start', () => {
-    it('starts the runtime', () => {
-      const runtime = createRuntime(createProgram())
-
-      expect(runtime.running).toBe(false)
-      expect(runtime.model).toBeUndefined()
-
-      runtime.start()
-
-      expect(runtime.running).toBe(true)
-      expect(runtime.model).toEqual({
-        count: 0,
-      })
-    })
-
-    it('initializes the model from program.init', () => {
-      const program = createProgram({
-        init() {
-          return result({
-            count: 42,
-          })
-        },
-      })
-
-      const runtime = createRuntime(program)
-
-      runtime.start()
-
-      expect(runtime.model).toEqual({
-        count: 42,
-      })
-    })
-
-    it('throws when started more than once', () => {
-      const runtime = createRuntime(createProgram())
-
-      runtime.start()
-
-      expect(() => {
-        runtime.start()
-      }).toThrow('Runtime has already been started.')
-    })
-
-    it('runs effects returned from init', async () => {
-      const runEffect = vi.fn()
-
-      const program = createProgram({
-        init() {
-          return result({ count: 0 }, [
-            {
-              type: 'noop',
-            },
-          ])
-        },
-
-        runEffect,
-      })
-
-      const runtime = createRuntime(program)
-
-      runtime.start()
-
-      await vi.waitFor(() => {
-        expect(runEffect).toHaveBeenCalledTimes(1)
-      })
-
-      expect(runEffect).toHaveBeenCalledWith(
-        {
-          type: 'noop',
-        },
-        expect.any(Function),
-        expect.any(AbortSignal)
-      )
-    })
-  })
-
-  describe('flags', () => {
-    it('passes flags to init', () => {
-      type Flags = Readonly<{
-        initialCount: number
-      }>
-
-      const init = vi.fn((flags: Flags): UpdateResult<Model, Effect> => ({
-        model: {
-          count: flags.initialCount,
-        },
-        effects: [],
-      }))
-
-      const program: Program<Model, Msg, Effect, never, Flags> = {
-        init,
-        update(model) {
-          return result(model)
-        },
-        runEffect() {},
-      }
-
-      const runtime = createRuntime(program)
-
-      runtime.start({
-        initialCount: 100,
-      })
-
-      expect(init).toHaveBeenCalledWith({
-        initialCount: 100,
-      })
-
-      expect(runtime.model).toEqual({
-        count: 100,
-      })
-    })
-  })
-
-  describe('dispatch', () => {
-    it('updates the model', () => {
-      const runtime = createRuntime(createProgram())
-
-      runtime.start()
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      expect(runtime.model).toEqual({
-        count: 1,
-      })
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      expect(runtime.model).toEqual({
-        count: 2,
-      })
-    })
-
-    it('processes messages in dispatch order', () => {
-      const updates: Msg[] = []
-
-      const program = createProgram({
-        update(model, message) {
-          updates.push(message)
-
-          switch (message.type) {
-            case 'increment':
-              return result({
-                count: model.count + 1,
-              })
-
-            case 'set':
-              return result({
-                count: message.value,
-              })
-
-            default:
-              return result(model)
-          }
-        },
-      })
-
-      const runtime = createRuntime(program)
-
-      runtime.start()
-
-      runtime.dispatch({
-        type: 'set',
-        value: 10,
-      })
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      expect(updates).toEqual([
-        {
-          type: 'set',
-          value: 10,
-        },
-        {
-          type: 'increment',
-        },
-      ])
-
-      expect(runtime.model).toEqual({
-        count: 11,
-      })
-    })
-
-    it('throws when dispatching before start', () => {
-      const runtime = createRuntime(createProgram())
-
-      expect(() => {
-        runtime.dispatch({
-          type: 'increment',
-        })
-      }).toThrow('Cannot dispatch to a stopped runtime.')
-    })
-
-    it('throws when dispatching after stop', () => {
-      const runtime = createRuntime(createProgram())
-
-      runtime.start()
-      runtime.stop()
-
-      expect(() => {
-        runtime.dispatch({
-          type: 'increment',
-        })
-      }).toThrow('Cannot dispatch to a stopped runtime.')
-    })
-  })
-
-  describe('message queue', () => {
-    it('does not re-enter update when an effect dispatches synchronously', async () => {
-      let updateDepth = 0
-      let maxDepth = 0
-
-      const update = vi.fn(
-        (model: Model, message: Msg): UpdateResult<Model, Effect> => {
-          updateDepth++
-          maxDepth = Math.max(maxDepth, updateDepth)
-
-          let next: UpdateResult<Model, Effect>
-
-          switch (message.type) {
-            case 'increment':
-              next = result(
-                {
-                  count: model.count + 1,
-                },
-                [
-                  {
-                    type: 'complete',
-                    value: 99,
-                  },
-                ]
-              )
-              break
-
-            case 'effectCompleted':
-              next = result({
-                count: message.value,
-              })
-              break
-
-            default:
-              next = result(model)
-          }
-
-          updateDepth--
-
-          return next
-        }
-      )
-
-      const runEffect: EffectHandler<Effect, Msg> = (effect, dispatch) => {
-        if (effect.type === 'complete') {
-          dispatch({
-            type: 'effectCompleted',
-            value: effect.value,
-          })
-        }
-      }
-
-      const runtime = createRuntime({
-        init() {
-          return result({
-            count: 0,
-          })
-        },
-
-        update,
-
-        runEffect,
-      })
-
-      runtime.start()
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      await vi.waitFor(() => {
-        expect(runtime.model).toEqual({
-          count: 99,
-        })
-      })
-
-      expect(maxDepth).toBe(1)
-      expect(update).toHaveBeenCalledTimes(2)
-    })
-  })
-
-  describe('effects', () => {
-    it('runs effects produced by update', async () => {
-      const runEffect = vi.fn()
-
-      const runtime = createRuntime(
-        createProgram({
-          update(model, message) {
-            if (message.type === 'increment') {
-              return result(
-                {
-                  count: model.count + 1,
-                },
-                [
-                  {
-                    type: 'noop',
-                  },
-                ]
-              )
-            }
-
-            return result(model)
-          },
-
-          runEffect,
-        })
-      )
-
-      runtime.start()
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      await vi.waitFor(() => {
-        expect(runEffect).toHaveBeenCalledTimes(1)
-      })
-    })
-
-    it('allows an effect to dispatch a message', async () => {
-      const runEffect: EffectHandler<Effect, Msg> = async (
-        effect,
-        dispatch
-      ) => {
-        if (effect.type === 'complete') {
-          dispatch({
-            type: 'effectCompleted',
-            value: effect.value,
-          })
-        }
-      }
-
-      const runtime = createRuntime(
-        createProgram({
-          update(model, message) {
-            switch (message.type) {
-              case 'increment':
-                return result(
-                  {
-                    count: model.count + 1,
-                  },
-                  [
-                    {
-                      type: 'complete',
-                      value: 50,
-                    },
-                  ]
-                )
-
-              case 'effectCompleted':
-                return result({
-                  count: message.value,
-                })
-
-              default:
-                return result(model)
-            }
-          },
-
-          runEffect,
-        })
-      )
-
-      runtime.start()
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      await vi.waitFor(() => {
-        expect(runtime.model).toEqual({
-          count: 50,
-        })
-      })
-    })
-
-    it('runs multiple effects independently', async () => {
-      const effects: Effect[] = []
-
-      const runtime = createRuntime(
-        createProgram({
-          update(model, message) {
-            if (message.type === 'increment') {
-              return result(model, [
-                {
-                  type: 'complete',
-                  value: 1,
-                },
-                {
-                  type: 'complete',
-                  value: 2,
-                },
-              ])
-            }
-
-            return result(model)
-          },
-
-          runEffect(effect) {
-            effects.push(effect)
-          },
-        })
-      )
-
-      runtime.start()
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      await vi.waitFor(() => {
-        expect(effects).toHaveLength(2)
-      })
-
-      expect(effects).toEqual([
-        {
-          type: 'complete',
-          value: 1,
-        },
-        {
-          type: 'complete',
-          value: 2,
-        },
-      ])
-    })
-
-    it('passes an AbortSignal to effects', async () => {
-      let receivedSignal: AbortSignal | undefined
-
-      const runtime = createRuntime(
-        createProgram({
-          update(model, message) {
-            if (message.type === 'increment') {
-              return result(model, [
-                {
-                  type: 'noop',
-                },
-              ])
-            }
-
-            return result(model)
-          },
-
-          runEffect(_effect, _dispatch, signal) {
-            receivedSignal = signal
-          },
-        })
-      )
-
-      runtime.start()
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      await vi.waitFor(() => {
-        expect(receivedSignal).toBeDefined()
-      })
-
-      expect(receivedSignal?.aborted).toBe(false)
-
-      runtime.stop()
-
-      expect(receivedSignal?.aborted).toBe(true)
-    })
-  })
-
-  describe('subscribe', () => {
-    it('notifies listeners when the model changes', () => {
-      const listener = vi.fn()
-
-      const runtime = createRuntime(createProgram())
-
-      runtime.start()
-
-      runtime.subscribe(listener)
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      expect(listener).toHaveBeenCalledWith({
-        count: 1,
-      })
-    })
-
-    it('immediately supplies the current model to a new listener', () => {
-      const listener = vi.fn()
-
-      const runtime = createRuntime(createProgram())
-
-      runtime.start()
-
-      runtime.dispatch({
-        type: 'set',
-        value: 10,
-      })
-
-      runtime.subscribe(listener)
-
-      expect(listener).toHaveBeenCalledWith({
-        count: 10,
-      })
-    })
-
-    it('does not immediately call a listener before start', () => {
-      const listener = vi.fn()
-
-      const runtime = createRuntime(createProgram())
-
-      runtime.subscribe(listener)
-
-      expect(listener).not.toHaveBeenCalled()
-    })
-
-    it('allows listeners to unsubscribe', () => {
-      const listener = vi.fn()
-
-      const runtime = createRuntime(createProgram())
-
-      runtime.start()
-
-      const unsubscribe = runtime.subscribe(listener)
-
-      listener.mockClear()
-
-      unsubscribe()
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      expect(listener).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('subscriptions', () => {
-    const strategy: SubscriptionStrategy<Subscription> = {
-      key(subscription) {
-        return subscription.id
-      },
-
-      equals(left, right) {
-        return (
-          left.type === right.type &&
-          left.id === right.id &&
-          left.value === right.value
-        )
-      },
+  | { kind: 'Inc' }
+  | { kind: 'IncTwice' }
+  | { kind: 'Tick' }
+  | { kind: 'SetTick'; ms: number | null }
+  | { kind: 'Got'; value: number }
+  | { kind: 'Fetch'; task: 'ok' | 'fail' }
+  | { kind: 'Throw' }
+  | { kind: 'Log'; text: string }
+
+const interval = (ms: number): SubType<Msg> =>
+  Sub.fromSource<Msg, { ms: number }>(
+    'interval',
+    { ms },
+    ({ ms }, dispatch) => {
+      const id = setInterval(() => dispatch({ kind: 'Tick' }), ms)
+      return () => clearInterval(id)
     }
+  )
 
-    it('starts subscriptions returned by subscriptions()', () => {
-      const runSubscription = vi.fn(() => vi.fn())
+const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
-      const runtime = createRuntime(
-        createProgram({
-          subscriptions() {
-            return [
-              {
-                type: 'test',
-                id: 'subscription-1',
-                value: 1,
-              },
-            ]
-          },
+const makeProgram = (
+  overrides: Partial<Program<number, Model, Msg>> = {}
+): Program<number, Model, Msg> => ({
+  init: (start) => [{ count: start, tickMs: null, log: [] }, Cmd.none],
+  update: (msg, model) => {
+    switch (msg.kind) {
+      case 'Inc':
+        return [{ ...model, count: model.count + 1 }, Cmd.none]
+      case 'IncTwice':
+        return [
+          model,
+          Cmd.effect((dispatch) => {
+            dispatch({ kind: 'Inc' })
+            dispatch({ kind: 'Inc' })
+          }),
+        ]
+      case 'Tick':
+        return [{ ...model, count: model.count + 10 }, Cmd.none]
+      case 'SetTick':
+        return [{ ...model, tickMs: msg.ms }, Cmd.none]
+      case 'Got':
+        return [{ ...model, count: msg.value }, Cmd.none]
+      case 'Fetch':
+        return [
+          model,
+          msg.task === 'ok'
+            ? Task.perform(
+                (value: number) => ({ kind: 'Got', value }) as Msg,
+                Task.succeed(42)
+              )
+            : Task.perform(
+                (value: number) => ({ kind: 'Got', value }) as Msg,
+                Task.fromPromise(async () => {
+                  throw new Error('network')
+                }, String) as never
+              ),
+        ]
+      case 'Throw':
+        throw new Error('update exploded')
+      case 'Log':
+        return [{ ...model, log: [...model.log, msg.text] }, Cmd.none]
+    }
+  },
+  subscriptions: (model) =>
+    model.tickMs === null ? Sub.none : interval(model.tickMs),
+  view: () => {},
+  ...overrides,
+})
 
-          runSubscription,
-
-          subscriptionStrategy: strategy,
-        })
-      )
-
-      runtime.start()
-
-      expect(runSubscription).toHaveBeenCalledTimes(1)
-
-      expect(runSubscription).toHaveBeenCalledWith(
-        {
-          type: 'test',
-          id: 'subscription-1',
-          value: 1,
-        },
-        expect.any(Function)
-      )
+describe('element start-up', () => {
+  it('passes flags to init, renders once, and performs the initial Cmd', () => {
+    const view = vi.fn()
+    const effect = vi.fn()
+    const program = makeProgram({
+      init: (start) => [
+        { count: start, tickMs: null, log: [] },
+        Cmd.effect(effect),
+      ],
+      view,
     })
-
-    it('does not restart an unchanged subscription', () => {
-      const runSubscription = vi.fn(() => vi.fn())
-
-      const runtime = createRuntime(
-        createProgram({
-          subscriptions() {
-            return [
-              {
-                type: 'test',
-                id: 'subscription-1',
-                value: 1,
-              },
-            ]
-          },
-
-          runSubscription,
-
-          subscriptionStrategy: strategy,
-        })
-      )
-
-      runtime.start()
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      expect(runSubscription).toHaveBeenCalledTimes(1)
-    })
-
-    it('restarts a subscription when its configuration changes', () => {
-      const unsubscribe = vi.fn()
-
-      const runSubscription = vi.fn(() => unsubscribe)
-
-      const runtime = createRuntime(
-        createProgram({
-          subscriptions(model) {
-            return [
-              {
-                type: 'test',
-                id: 'subscription-1',
-                value: model.count,
-              },
-            ]
-          },
-
-          runSubscription,
-
-          subscriptionStrategy: strategy,
-        })
-      )
-
-      runtime.start()
-
-      expect(runSubscription).toHaveBeenCalledTimes(1)
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      expect(unsubscribe).toHaveBeenCalledTimes(1)
-
-      expect(runSubscription).toHaveBeenCalledTimes(2)
-
-      expect(runSubscription).toHaveBeenLastCalledWith(
-        {
-          type: 'test',
-          id: 'subscription-1',
-          value: 1,
-        },
-        expect.any(Function)
-      )
-    })
-
-    it('stops subscriptions that disappear', () => {
-      const unsubscribe = vi.fn()
-
-      const runtime = createRuntime(
-        createProgram({
-          subscriptions(model) {
-            if (model.count === 0) {
-              return [
-                {
-                  type: 'test',
-                  id: 'subscription-1',
-                  value: 0,
-                },
-              ]
-            }
-
-            return []
-          },
-
-          runSubscription() {
-            return unsubscribe
-          },
-
-          subscriptionStrategy: strategy,
-        })
-      )
-
-      runtime.start()
-
-      runtime.dispatch({
-        type: 'increment',
-      })
-
-      expect(unsubscribe).toHaveBeenCalledTimes(1)
-    })
-
-    it('allows subscriptions to dispatch messages', () => {
-      let dispatch: Dispatch<Msg> | undefined
-
-      const runSubscription: SubscriptionHandler<Subscription, Msg> = (
-        _subscription,
-        runtimeDispatch
-      ) => {
-        dispatch = runtimeDispatch
-
-        return () => {}
-      }
-
-      const runtime = createRuntime(
-        createProgram({
-          subscriptions() {
-            return [
-              {
-                type: 'test',
-                id: 'subscription-1',
-                value: 0,
-              },
-            ]
-          },
-
-          runSubscription,
-
-          subscriptionStrategy: strategy,
-        })
-      )
-
-      runtime.start()
-
-      dispatch?.({
-        type: 'subscriptionEvent',
-        value: 77,
-      })
-
-      expect(runtime.model).toEqual({
-        count: 77,
-      })
-    })
-
-    it('throws for duplicate subscription keys', () => {
-      const runtime = createRuntime(
-        createProgram({
-          subscriptions() {
-            return [
-              {
-                type: 'test',
-                id: 'same',
-                value: 1,
-              },
-              {
-                type: 'test',
-                id: 'same',
-                value: 2,
-              },
-            ]
-          },
-
-          runSubscription() {
-            return () => {}
-          },
-
-          subscriptionStrategy: strategy,
-        })
-      )
-
-      expect(() => {
-        runtime.start()
-      }).toThrow('Duplicate subscription key: same')
-    })
+    element({ program, flags: 7 })
+    expect(view).toHaveBeenCalledTimes(1)
+    expect(view.mock.calls[0]![0]).toEqual({ count: 7, tickMs: null, log: [] })
+    expect(effect).toHaveBeenCalledTimes(1)
   })
 
-  describe('stop', () => {
-    it('marks the runtime as stopped', () => {
-      const runtime = createRuntime(createProgram())
-
-      runtime.start()
-
-      runtime.stop()
-
-      expect(runtime.running).toBe(false)
+  it('rethrows when init throws', () => {
+    const program = makeProgram({
+      init: () => {
+        throw new Error('no model')
+      },
     })
+    expect(() => element({ program, onError: () => {} })).toThrow('no model')
+  })
 
-    it('stops all active subscriptions', () => {
-      const unsubscribe1 = vi.fn()
-      const unsubscribe2 = vi.fn()
+  it('messages dispatched during the initial Cmd are processed after start-up, in order', () => {
+    const seen: number[] = []
+    const program = makeProgram({
+      init: (start) => [
+        { count: start, tickMs: null, log: [] },
+        Cmd.effect((dispatch) => {
+          dispatch({ kind: 'Inc' })
+          dispatch({ kind: 'Inc' })
+        }),
+      ],
+      view: (model) => {
+        seen.push(model.count)
+      },
+    })
+    element({ program, flags: 0 })
+    expect(seen).toEqual([0, 1, 2])
+  })
+})
 
-      const strategy: SubscriptionStrategy<Subscription> = {
-        key(subscription) {
-          return subscription.id
+describe('element update loop', () => {
+  it('calls view after every update with the new model', () => {
+    const seen: number[] = []
+    const app = element({
+      program: makeProgram({ view: (m) => void seen.push(m.count) }),
+      flags: 0,
+    })
+    app.dispatch({ kind: 'Inc' })
+    app.dispatch({ kind: 'Inc' })
+    expect(seen).toEqual([0, 1, 2])
+  })
+
+  it('queues re-entrant dispatches and processes them in order, not recursively', () => {
+    const order: string[] = []
+    const program = makeProgram({
+      update: (msg, model) => {
+        order.push(`update:${msg.kind}`)
+        return makeProgram().update(msg, model)
+      },
+      view: (model) => {
+        order.push(`view:${model.count}`)
+      },
+    })
+    const app = element({ program, flags: 0 })
+    order.length = 0
+    app.dispatch({ kind: 'IncTwice' })
+    expect(order).toEqual([
+      'update:IncTwice',
+      'view:0',
+      'update:Inc',
+      'view:1',
+      'update:Inc',
+      'view:2',
+    ])
+  })
+
+  it('a dispatch from inside view is queued', () => {
+    let once = false
+    const seen: number[] = []
+    const program = makeProgram({
+      view: (model, dispatch) => {
+        seen.push(model.count)
+        if (!once) {
+          once = true
+          dispatch({ kind: 'Inc' })
+        }
+      },
+    })
+    element({ program, flags: 0 })
+    expect(seen).toEqual([0, 1])
+  })
+
+  it('delivers a performed task result as a Msg', async () => {
+    const seen: number[] = []
+    const app = element({
+      program: makeProgram({ view: (m) => void seen.push(m.count) }),
+      flags: 0,
+    })
+    app.dispatch({ kind: 'Fetch', task: 'ok' })
+    await flush()
+    expect(seen).toEqual([0, 0, 42])
+  })
+})
+
+describe('element subscriptions', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('starts, restarts on params change, and tears down', () => {
+    const seen: number[] = []
+    const app = element({
+      program: makeProgram({ view: (m) => void seen.push(m.count) }),
+      flags: 0,
+    })
+    expect(vi.getTimerCount()).toBe(0)
+
+    app.dispatch({ kind: 'SetTick', ms: 100 })
+    expect(vi.getTimerCount()).toBe(1)
+    vi.advanceTimersByTime(250)
+    expect(seen.at(-1)).toBe(20)
+
+    app.dispatch({ kind: 'SetTick', ms: 1000 }) // params changed → restarted
+    expect(vi.getTimerCount()).toBe(1)
+    vi.advanceTimersByTime(250)
+    expect(seen.at(-1)).toBe(20)
+    vi.advanceTimersByTime(750)
+    expect(seen.at(-1)).toBe(30)
+
+    app.dispatch({ kind: 'Inc' }) // same key, same params → left running
+    vi.advanceTimersByTime(1000)
+    expect(seen.at(-1)).toBe(41)
+
+    app.dispatch({ kind: 'SetTick', ms: null })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('does not restart a subscription when params are structurally equal', () => {
+    const start = vi.fn(() => () => {})
+    const program = makeProgram({
+      subscriptions: () => Sub.fromSource('s', { a: [1, { b: 2 }] }, start),
+    })
+    const app = element({ program, flags: 0 })
+    app.dispatch({ kind: 'Inc' })
+    app.dispatch({ kind: 'Inc' })
+    expect(start).toHaveBeenCalledTimes(1)
+  })
+
+  it('namespaced subscriptions from Sub.map are independent', () => {
+    const starts: string[] = []
+    const src = (key: string) =>
+      Sub.fromSource<string, null>(key, null, () => {
+        starts.push(key)
+        return () => {}
+      })
+    const program = makeProgram({
+      subscriptions: () =>
+        Sub.batch(
+          Sub.map('left', (): Msg => ({ kind: 'Inc' }), src('tick')),
+          Sub.map('right', (): Msg => ({ kind: 'Inc' }), src('tick'))
+        ),
+    })
+    element({ program, flags: 0 })
+    expect(starts).toEqual(['tick', 'tick'])
+  })
+})
+
+describe('element stop', () => {
+  it('tears down subscriptions and ignores later dispatches', () => {
+    vi.useFakeTimers()
+    const view = vi.fn()
+    const app = element({ program: makeProgram({ view }), flags: 0 })
+    app.dispatch({ kind: 'SetTick', ms: 10 })
+    expect(vi.getTimerCount()).toBe(1)
+    app.stop()
+    expect(vi.getTimerCount()).toBe(0)
+    const calls = view.mock.calls.length
+    app.dispatch({ kind: 'Inc' })
+    expect(view.mock.calls.length).toBe(calls)
+    vi.useRealTimers()
+  })
+
+  it('aborts in-flight tasks: no Msg arrives after stop', async () => {
+    const seen: number[] = []
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const program = makeProgram({
+      view: (m) => void seen.push(m.count),
+      init: () => [
+        { count: 0, tickMs: null, log: [] },
+        Task.perform(
+          (value: number): Msg => ({ kind: 'Got', value }),
+          Task.fromPromise(async (signal) => {
+            expect(signal.aborted).toBe(false)
+            await gate
+            return 99
+          }, String) as never
+        ),
+      ],
+    })
+    const app = element({ program })
+    app.stop()
+    release()
+    await flush()
+    expect(seen).toEqual([0])
+  })
+
+  it('hands the program signal to tasks so they can cancel their own work', () => {
+    const box: { signal?: AbortSignal } = {}
+    const program = makeProgram({
+      init: () => [
+        { count: 0, tickMs: null, log: [] },
+        Task.attempt(
+          (): Msg => ({ kind: 'Inc' }),
+          Task.fromPromise((signal) => {
+            box.signal = signal
+            return new Promise<number>(() => {})
+          }, String)
+        ),
+      ],
+    })
+    const app = element({ program })
+    expect(box.signal?.aborted).toBe(false)
+    app.stop()
+    expect(box.signal?.aborted).toBe(true)
+  })
+})
+
+describe('element error handling', () => {
+  it('update throw: onError gets step and msg, model unchanged, loop continues', () => {
+    const seen: number[] = []
+    const errors: ErrorContext<Msg>[] = []
+    const app = element({
+      program: makeProgram({ view: (m) => void seen.push(m.count) }),
+      flags: 5,
+      onError: (_error, context) => void errors.push(context),
+    })
+    app.dispatch({ kind: 'Throw' })
+    expect(errors).toEqual([{ step: 'update', msg: { kind: 'Throw' } }])
+    expect(seen).toEqual([5]) // no re-render for the failed step
+    app.dispatch({ kind: 'Inc' })
+    expect(seen).toEqual([5, 6])
+  })
+
+  it('rethrows out of dispatch when no onError is given, and keeps working afterwards', () => {
+    const seen: number[] = []
+    const app = element({
+      program: makeProgram({ view: (m) => void seen.push(m.count) }),
+      flags: 0,
+    })
+    expect(() => app.dispatch({ kind: 'Throw' })).toThrow('update exploded')
+    app.dispatch({ kind: 'Inc' })
+    expect(seen).toEqual([0, 1])
+  })
+
+  it('view throw is reported and the updated model is kept', () => {
+    const errors: ErrorContext<Msg>[] = []
+    const seen: number[] = []
+    let calls = 0
+    const app = element({
+      program: makeProgram({
+        view: (m) => {
+          if (++calls === 2) throw new Error('render')
+          seen.push(m.count)
         },
+      }),
+      flags: 0,
+      onError: (_e, c) => void errors.push(c),
+    })
+    app.dispatch({ kind: 'Inc' }) // view throws on this render
+    expect(errors).toEqual([{ step: 'view', msg: { kind: 'Inc' } }])
+    app.dispatch({ kind: 'Inc' })
+    expect(seen).toEqual([0, 2]) // the update that preceded the failing view was kept
+    expect(errors).toHaveLength(1)
+  })
 
-        equals(left, right) {
-          return left.id === right.id
-        },
-      }
-
-      const runtime = createRuntime(
-        createProgram({
-          subscriptions() {
-            return [
-              {
-                type: 'test',
-                id: 'one',
-                value: 1,
-              },
-              {
-                type: 'test',
-                id: 'two',
-                value: 2,
-              },
-            ]
-          },
-
-          runSubscription(subscription) {
-            return subscription.id === 'one' ? unsubscribe1 : unsubscribe2
-          },
-
-          subscriptionStrategy: strategy,
+  it('subscriptions / sub-start / sub-teardown / effect are reported with their step', () => {
+    const errors: string[] = []
+    let phase: 'subs' | 'start' | 'teardown' | 'ok' = 'ok'
+    const program = makeProgram({
+      subscriptions: () => {
+        if (phase === 'subs') throw new Error('subs')
+        if (phase === 'ok') return Sub.none
+        return Sub.fromSource('s', phase, () => {
+          if (phase === 'start') throw new Error('start')
+          return () => {
+            throw new Error('teardown')
+          }
         })
-      )
-
-      runtime.start()
-
-      runtime.stop()
-
-      expect(unsubscribe1).toHaveBeenCalledTimes(1)
-
-      expect(unsubscribe2).toHaveBeenCalledTimes(1)
+      },
     })
-
-    it('is safe to call stop more than once', () => {
-      const runtime = createRuntime(createProgram())
-
-      runtime.start()
-
-      expect(() => {
-        runtime.stop()
-        runtime.stop()
-      }).not.toThrow()
+    const app = element({
+      program,
+      flags: 0,
+      onError: (_e, c) => void errors.push(c.step),
     })
+    phase = 'subs'
+    app.dispatch({ kind: 'Inc' })
+    phase = 'start'
+    app.dispatch({ kind: 'Inc' })
+    phase = 'teardown'
+    app.dispatch({ kind: 'Inc' }) // starts fine (params changed from 'start' to 'teardown')
+    phase = 'ok'
+    app.dispatch({ kind: 'Inc' }) // tears down → throws
+    app.dispatch({ kind: 'IncTwice' })
+    expect(errors).toEqual(['subscriptions', 'sub-start', 'sub-teardown'])
+
+    const effectErrors: string[] = []
+    const app2 = element({
+      program: makeProgram({
+        update: () => [
+          { count: 0, tickMs: null, log: [] },
+          Cmd.effect(() => {
+            throw new Error('effect')
+          }),
+        ],
+      }),
+      flags: 0,
+      onError: (_e, c) => void effectErrors.push(c.step),
+    })
+    app2.dispatch({ kind: 'Inc' })
+    expect(effectErrors).toEqual(['effect'])
+  })
+
+  it('a failing performed task is routed to onError with step perform', async () => {
+    const errors: ErrorContext<Msg>[] = []
+    const seen: number[] = []
+    const app = element({
+      program: makeProgram({ view: (m) => void seen.push(m.count) }),
+      flags: 0,
+      onError: (_e, c) => void errors.push(c),
+    })
+    app.dispatch({ kind: 'Fetch', task: 'fail' })
+    await flush()
+    expect(errors).toEqual([
+      { step: 'perform', msg: { kind: 'Fetch', task: 'fail' } },
+    ])
+    expect(seen).toEqual([0, 0])
   })
 })

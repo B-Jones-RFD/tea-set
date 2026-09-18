@@ -1,880 +1,210 @@
 # tea-set
 
-A small, type-safe runtime for building TypeScript applications using
-**The Elm Architecture**.
+Utilities for writing programs in **The Elm Architecture** in TypeScript: `Cmd`, `Sub`, `Task`, `Maybe`, `Result`, `RemoteData`, parent/child composition, and a small runtime (`element`) that drives the `init` / `update` / `subscriptions` / `view` loop.
 
-The package provides the primitives and runtime machinery for modeling
-your application as a pure state machine:
+- **Framework-agnostic.** `view` is a callback you supply; render with whatever you like.
+- **Zero runtime dependencies.** ESM with TypeScript declarations.
+- **Commands are data.** A `Cmd` describes work; nothing runs until the runtime performs it, so `update` stays pure and testable.
+- **Elm names.** If you know `Cmd.batch`, `Task.attempt`, `Maybe.withDefault`, `Sub.map`, you already know the API.
 
-``` text
-Msg → update(Model, Msg) → Model + Effects
-                             │
-                             ▼
-                       Effect Handler
-                             │
-                             ▼
-                            Msg
-```
+## Install
 
-Long-lived external event sources are modeled using subscriptions:
-
-``` text
-Model → subscriptions(Model) → Subscriptions
-                                  │
-                                  ▼
-                         Subscription Handler
-                                  │
-                                  ▼
-                                 Msg
-```
-
-The runtime manages message dispatch, sequential state transitions,
-asynchronous effects, subscription lifecycles, cancellation, and model
-observers while leaving your application's domain model and effect types entirely under your control.
-
-## Features
-
--   Type-safe `Model`, `Msg`, `Effect`, `Subscription`, and `Flags`
--   Pure `update` functions
--   Elm-style initialization
--   Declarative effects
--   Declarative subscriptions
--   Sequential message processing
--   Concurrent asynchronous effects
--   Effect cancellation with `AbortSignal`
--   Automatic subscription lifecycle management
--   Model observers
--   Type-safe startup flags
--   Framework-independent
--   Zero application architecture dependencies
-
-## Installation
-
-Using pnpm:
-
-``` bash
+```sh
 pnpm add @b-jones-rfd/tea-set
 ```
 
-Using npm:
+Requires Node ≥ 24 (or any modern browser); `AbortSignal` is used for cancellation.
 
-``` bash
-npm install @b-jones-rfd/tea-set
-```
+## A complete program
 
-## Quick Start
+```ts
+import { Cmd, Sub, element, assertNever } from '@b-jones-rfd/tea-set'
+import type { Program } from '@b-jones-rfd/tea-set'
 
-Define your application's model:
+type Model = { count: number; ticking: boolean }
+type Msg = { kind: 'Incremented' } | { kind: 'TickingToggled' } | { kind: 'Ticked' }
 
-``` ts
-type Model = Readonly<{
-  count: number;
-}>;
-```
+const everyMs = <Msg>(ms: number, toMsg: () => Msg): Sub<Msg> =>
+  Sub.fromSource('time/every', { ms }, ({ ms }, dispatch) => {
+    const id = setInterval(() => dispatch(toMsg()), ms)
+    return () => clearInterval(id)
+  })
 
-Define the messages your application can receive:
+const program: Program<void, Model, Msg> = {
+  init: () => [{ count: 0, ticking: false }, Cmd.none],
 
-``` ts
-type Msg =
-  | { type: "increment" }
-  | { type: "decrement" }
-  | { type: "save" }
-  | { type: "saved" };
-```
-
-Define the effects your application can request:
-
-``` ts
-type Effect =
-  | {
-      type: "save";
-      count: number;
-    };
-```
-
-Then create a program:
-
-``` ts
-import {
-  createRuntime,
-  none,
-  withEffect,
-  type Program,
-} from "@b-jones-rfd/tea-set";
-
-const program: Program<Model, Msg, Effect> = {
-  init() {
-    return none({ count: 0 });
-  },
-
-  update(model, msg) {
-    switch (msg.type) {
-      case "increment":
-        return none({ count: model.count + 1 });
-
-      case "decrement":
-        return none({ count: model.count - 1 });
-
-      case "save":
-        return withEffect(model, {
-          type: "save",
-          count: model.count,
-        });
-
-      case "saved":
-        return none(model);
+  update: (msg, model) => {
+    switch (msg.kind) {
+      case 'Incremented':
+      case 'Ticked':
+        return [{ ...model, count: model.count + 1 }, Cmd.none]
+      case 'TickingToggled':
+        return [{ ...model, ticking: !model.ticking }, Cmd.none]
+      default:
+        return assertNever(msg) // add a variant to Msg and this stops compiling
     }
   },
 
-  async runEffect(effect, dispatch, signal) {
-    switch (effect.type) {
-      case "save":
-        await saveCount(effect.count, signal);
-        dispatch({ type: "saved" });
-        return;
-    }
+  // Declared, never started by hand: the runtime starts, restarts and stops sources
+  // as the value returned here changes after each update.
+  subscriptions: (model) => (model.ticking ? everyMs(1000, () => ({ kind: 'Ticked' })) : Sub.none),
+
+  view: (model, dispatch) => {
+    document.body.textContent = `count: ${model.count}`
+    document.body.onclick = () => dispatch({ kind: 'Incremented' })
   },
-};
-```
-
-Create and start the runtime:
-
-``` ts
-const runtime = createRuntime(program);
-
-runtime.start();
-runtime.dispatch({ type: "increment" });
-
-console.log(runtime.model);
-// { count: 1 }
-```
-
-## The Elm Architecture
-
-The Elm Architecture organizes an application around a few concepts:
-
-``` text
-Model
-Msg
-init
-update
-effects
-subscriptions
-```
-
-The central idea is that application state transitions remain pure.
-
-Instead of performing side effects directly:
-
-``` ts
-async function update(model: Model, msg: Msg) {
-  const todos = await database.findTodos();
-
-  return {
-    ...model,
-    todos,
-  };
 }
+
+const app = element({ program })
+app.dispatch({ kind: 'TickingToggled' }) // an "incoming port": outside code can send a Msg
+// later: app.stop() — tears down subscriptions and aborts in-flight tasks
 ```
 
-the update function describes the desired effect:
-
-``` ts
-function update(model: Model, msg: Msg) {
-  return {
-    model,
-    effects: [
-      {
-        type: "todos/load",
-      },
-    ],
-  };
-}
-```
-
-The runtime passes that effect to an interpreter outside the
-application's pure state-transition logic.
-
-## Model
-
-`Model` represents the complete application state managed by a runtime.
-The package does not impose any structure on it.
-
-``` ts
-type Model = Readonly<{
-  todos: readonly Todo[];
-  loading: boolean;
-  error?: string;
-}>;
-```
-
-Immutable models are recommended because they make state transitions
-easier to reason about and test.
-
-## Messages
-
-Messages describe events that have occurred or actions that have been
-requested. Discriminated unions work particularly well:
-
-``` ts
-type Msg =
-  | {
-      type: "todo/createRequested";
-      text: string;
-    }
-  | {
-      type: "todo/created";
-      todo: Todo;
-    }
-  | {
-      type: "todo/createFailed";
-      error: Error;
-    };
-```
-
-Messages are the only way application state changes.
-
-## Update
-
-An update function receives the current model and a message:
-
-``` ts
-export type Update<Model, Msg, Effect> = (
-  model: Model,
-  message: Msg,
-) => UpdateResult<Model, Effect>;
-```
-
-It returns the next model and zero or more effects:
-
-``` ts
-export type UpdateResult<Model, Effect> = Readonly<{
-  model: Model;
-  effects: readonly Effect[];
-}>;
-```
-
-`update` should remain pure. Avoid performing operations such as
-`fetch`, database queries, logging, timers, or filesystem writes inside
-it. Instead, represent those operations as effects.
-
-## Effects
-
-An effect describes something the application wants the outside world to
-do. The application owns its effect type.
-
-``` ts
-type Effect =
-  | { type: "todo/load" }
-  | { type: "todo/create"; text: string }
-  | { type: "log"; message: string };
-```
-
-Effects are data. This makes them easy to inspect, test, log, and reason
-about.
-
-### Effect Handlers
-
-Effects are interpreted using an `EffectHandler`:
-
-``` ts
-export type EffectHandler<Effect, Msg> = (
-  effect: Effect,
-  dispatch: Dispatch<Msg>,
-  signal: AbortSignal,
-) => void | Promise<void>;
-```
-
-Effect handlers interact with the outside world and communicate results
-back to the application by dispatching messages. An effect may dispatch
-zero, one, or multiple messages.
-
-## Effect Concurrency
-
-Effects are started independently. This allows asynchronous effects to
-execute concurrently.
-
-Application state transitions, however, remain sequential.
-
-## Sequential Message Processing
-
-One of the runtime's primary guarantees is:
-
-> Only one `update` invocation is active at a time.
-
-Messages are placed into an internal queue. Even when multiple
-asynchronous effects complete concurrently, their resulting messages are
-reduced sequentially. This prevents state updates from racing with one
-another.
-
-## Helper Functions
-
-### `none`
-
-Return a model without effects:
-
-``` ts
-return none({
-  ...model,
-  count: model.count + 1,
-});
-```
-
-### `withEffect`
-
-Return a model with one effect:
-
-``` ts
-return withEffect(model, {
-  type: "todo/load",
-});
-```
-
-### `withEffects`
-
-Return a model with multiple effects:
-
-``` ts
-return withEffects(model, [
-  { type: "audit/write" },
-  { type: "metrics/increment" },
-]);
-```
-
-## Initialization
-
-Programs initialize themselves through `init`.
-
-``` ts
-const program: Program<Model, Msg, Effect> = {
-  init() {
-    return none({ count: 0 });
-  },
-
-  // ...
-};
-```
-
-Initialization can also produce effects.
-
-Starting the runtime with `runtime.start()` initializes the model,
-publishes the initial model, initializes subscriptions, and executes
-initialization effects.
-
-## Startup Flags
-
-Programs can define strongly typed startup configuration.
-
-``` ts
-type Flags = Readonly<{
-  userId: string;
-  environment: "development" | "production";
-}>;
-```
-
-Specify the flags type on the program:
-
-``` ts
-const program: Program<
-  Model,
-  Msg,
-  Effect,
-  never,
-  Flags
-> = {
-  init(flags) {
-    return none({
-      userId: flags.userId,
-      todos: [],
-    });
-  },
-
-  update,
-  runEffect,
-};
-```
-
-The runtime then requires flags:
-
-``` ts
-runtime.start({
-  userId: "1234",
-  environment: "production",
-});
-```
-
-If no flags are defined, use `runtime.start()`.
-
-## Subscriptions
-
-Effects represent one-time operations from the application to the
-outside world. Subscriptions represent long-lived external event sources
-flowing into the application.
-
-Typical subscriptions include:
-
--   timers
--   WebSockets
--   message queues
--   Redis pub/sub
--   filesystem watchers
--   process signals
--   event emitters
--   TCP connections
-
-A subscription is also represented as data:
-
-``` ts
-type Subscription =
-  | {
-      type: "timer";
-      intervalMs: number;
-    }
-  | {
-      type: "shutdown";
-    };
-```
-
-Subscriptions are derived from the current model:
-
-``` ts
-function subscriptions(
-  model: Model,
-): readonly Subscription[] {
-  if (!model.started) {
-    return [];
-  }
-
+`init(flags)` and `update(msg, model)` both return `[Model, Cmd<Msg>]`, Elm's `(Model, Cmd Msg)`.
+
+## Effects as tasks
+
+Wrap Promise-returning work in a `Task`; turn it into a `Cmd` with `Task.attempt` (may fail, delivers a `Result`) or `Task.perform` (cannot fail).
+
+```ts
+import { Task, RemoteData, Loading } from '@b-jones-rfd/tea-set'
+import type { Result } from '@b-jones-rfd/tea-set'
+
+type User = { id: string; name: string }
+type HttpError = { kind: 'Network'; reason: string }
+
+const searchUsers = (query: string): Task<HttpError, User[]> =>
+  Task.fromPromise(
+    async (signal) => {
+      const res = await fetch(`/api/users?q=${encodeURIComponent(query)}`, { signal })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return (await res.json()) as User[]
+    },
+    (e) => ({ kind: 'Network', reason: e instanceof Error ? e.message : String(e) })
+  )
+
+// in update:
+case 'QueryChanged':
   return [
-    {
-      type: "timer",
-      intervalMs: 30_000,
-    },
-  ];
+    { ...model, results: Loading },
+    Task.attempt((result: Result<HttpError, User[]>): Msg => ({ kind: 'Received', result }), searchUsers(msg.query)),
+  ]
+case 'Received':
+  return [{ ...model, results: RemoteData.fromResult(msg.result) }, Cmd.none]
+```
+
+The runtime passes its `AbortSignal` to every task. `stop()` aborts it: in-flight work is cancelled and any result arriving afterwards is discarded — no `Msg` is dispatched. Thrown errors and rejections inside a task become `Err` via the `onError` mapper you give `fromPromise`.
+
+`Cmd.effect((dispatch) => …)` is the escape hatch for effects that don't fit a task.
+
+## Parent / child composition
+
+A child's `Msg` is split with `ChildMsg<Internal, External>`: `Internal` messages it handles itself, `External` events it raises for its parent. The child never learns the parent's `Msg` type.
+
+```ts
+// search-box.ts (child)
+import { Cmd, Internal, raise } from '@b-jones-rfd/tea-set'
+import type { ChildMsg } from '@b-jones-rfd/tea-set'
+
+export type InternalMsg = { kind: 'QueryChanged'; query: string } | { kind: 'Chose'; user: User }
+export type ExternalMsg = { kind: 'UserChosen'; user: User }
+export type Msg = ChildMsg<InternalMsg, ExternalMsg>
+
+export const update = (msg: Msg, model: Model): [Model, Cmd<Msg>] => {
+  if (msg.kind === 'External') return [model, Cmd.none] // addressed to the parent
+  switch (msg.msg.kind) {
+    case 'Chose':
+      return [{ ...model, open: false }, raise({ kind: 'UserChosen', user: msg.msg.user })]
+    // …
+  }
 }
 ```
 
-## Subscription Handlers
+```ts
+// app.ts (parent)
+import { Cmd, Sub, Internal, translate, updateChild } from '@b-jones-rfd/tea-set'
+import type { Translator } from '@b-jones-rfd/tea-set'
+import * as SearchBox from './search-box'
 
-A subscription handler turns a subscription description into an active
-external listener:
+type Msg = { kind: 'SearchMsg'; msg: SearchBox.Msg } | { kind: 'UrlChanged'; path: string }
 
-``` ts
-export type SubscriptionHandler<Subscription, Msg> = (
-  subscription: Subscription,
-  dispatch: Dispatch<Msg>,
-) => Unsubscribe;
-```
-
-Every subscription handler returns an unsubscribe function, allowing the
-runtime to automatically clean up subscriptions when they are no longer
-required.
-
-## Subscription Identity
-
-The runtime needs to determine whether subscriptions have been added,
-removed, or changed.
-
-Define a `SubscriptionStrategy`:
-
-``` ts
-const subscriptionStrategy = {
-  key(subscription: Subscription) {
-    switch (subscription.type) {
-      case "timer":
-        return "timer";
-
-      case "shutdown":
-        return "shutdown";
-    }
-  },
-
-  equals(left: Subscription, right: Subscription) {
-    return JSON.stringify(left) === JSON.stringify(right);
-  },
-};
-```
-
-The `key` identifies the logical subscription. `equals` determines
-whether its configuration has changed.
-
-For production applications, explicit structural equality is generally
-preferable to `JSON.stringify`.
-
-## Subscription Lifecycle
-
-After every model transition, the runtime reevaluates
-`subscriptions(model)` and compares the desired subscriptions to the
-currently active subscriptions.
-
-Subscriptions that disappear are automatically stopped. Subscriptions
-whose configuration changes are stopped and restarted. Unchanged
-subscriptions remain active.
-
-## Observing the Model
-
-Consumers can subscribe to model changes:
-
-``` ts
-const unsubscribe =
-  runtime.subscribe(model => {
-    console.log(model);
-  });
-```
-
-The listener immediately receives the current model if the runtime has
-already started. Future model transitions are also delivered.
-
-Stop listening with:
-
-``` ts
-unsubscribe();
-```
-
-This mechanism can be used to integrate the runtime with UI frameworks
-or server infrastructure.
-
-## Cancellation
-
-Each runtime owns an `AbortController`.
-
-Effect handlers receive its signal:
-
-``` ts
-async function runEffect(
-  effect: Effect,
-  dispatch: Dispatch<Msg>,
-  signal: AbortSignal,
-) {
-  const response = await fetch(effect.url, {
-    signal,
-  });
-
-  // ...
+const searchTranslator: Translator<SearchBox.InternalMsg, SearchBox.ExternalMsg, Msg> = {
+  onInternal: (msg) => ({ kind: 'SearchMsg', msg: Internal(msg) }),
+  onExternal: (event) => ({ kind: 'UrlChanged', path: `/users/${event.user.id}` }),
 }
+const toParent = translate(searchTranslator)
+
+const search = updateChild({
+  get: (model: Model) => model.search,
+  set: (model, search) => ({ ...model, search }),
+  translator: searchTranslator,
+  update: SearchBox.update,
+})
+
+// update:            case 'SearchMsg': return search(msg.msg, model)
+// subscriptions:     Sub.map('search', toParent, SearchBox.subscriptions(model.search))
+// view (Html.map):   SearchBox.view(model.search, (msg) => dispatch(toParent(msg)))
 ```
 
-Calling `runtime.stop()` aborts the signal. Effect handlers should pass
-the signal to APIs that support cancellation and avoid dispatching
-messages after cancellation.
+`Sub.map` namespaces subscription keys (`search::keyboard/keydown`), so two instances of the same child never collapse into one subscription. `delegate(f, [model, cmd])` is the lower-level piece `updateChild` is built on.
 
-## Stopping the Runtime
+## API
 
-Call:
+Every namespace below is also a type of the same name (`const m: Maybe<number> = Maybe.map(…)`).
 
-``` ts
-runtime.stop();
+| Namespace | Members |
+|---|---|
+| `Cmd` | `none`, `batch`, `map`, `effect` |
+| `Sub` | `none`, `batch`, `map(namespace, f, sub)`, `fromSource(key, params, start)` |
+| `Task` | `succeed`, `fail`, `fromPromise`, `map`, `mapError`, `andThen`, `map2`, `sequence`, `perform`, `attempt` |
+| `Maybe` | `map`, `map2`, `andThen`, `withDefault`, `isJust`, `isNothing`, `fromNullable`, `toNullable` |
+| `Result` | `map`, `mapError`, `andThen`, `withDefault`, `toMaybe`, `fromMaybe`, `isOk`, `isErr` |
+| `RemoteData` | `map`, `mapError`, `withDefault`, `fromResult`, `toMaybe`, `isSuccess`, `isLoading` |
+
+| Constructors | |
+|---|---|
+| `Just`, `Nothing` | `Maybe` |
+| `Ok`, `Err` | `Result` |
+| `NotAsked`, `Loading`, `Failure`, `Success` | `RemoteData` |
+| `Internal`, `External` | `ChildMsg` |
+
+| Function | |
+|---|---|
+| `element({ program, flags?, onError? })` | Start a program; returns `{ dispatch, stop }` |
+| `translate(translator)` | `ChildMsg → ParentMsg` |
+| `delegate(f, [model, cmd])` | Map a child's `Cmd` into the parent's |
+| `updateChild({ get, set, translator, update })` | A parent-shaped update step for one child |
+| `raise(event)` | A `Cmd` that raises an `External` event |
+| `assertNever(x)` | Exhaustiveness check for `switch` |
+
+Types: `Program`, `Dispatch`, `ChildMsg`, `Translator`, `ElementOptions`, `ErrorContext`, `ErrorStep`, `Running`, `SubSource`, `CmdLeaf`, `Teardown`.
+
+### Testing helpers
+
+Because a `Cmd` is data, `update` can be tested without running anything:
+
+```ts
+import { flattenCmd, runCmd } from '@b-jones-rfd/tea-set'
+
+const [model, cmd] = update({ kind: 'QueryChanged', query: 'ada' }, initialModel)
+flattenCmd(cmd)           // → [{ kind: 'Attempt', task, toMsg }] — inspect without performing
+await runCmd(cmd)         // → the Msgs it dispatches, once every task has settled
 ```
 
-Stopping:
+`runCmd` rejects with a `CmdError { step, cause }` if an effect or task fails. `flattenSubs(sub)` lists a subscription's `Source` leaves.
 
--   marks the runtime as stopped
--   aborts active effects through the runtime's `AbortSignal`
--   stops active subscriptions
--   clears queued messages
+## Runtime semantics
 
-Calling `stop()` more than once is safe. Messages cannot be dispatched
-to a stopped runtime.
+- After each `update`: `view` is rendered, subscriptions are reconciled, then the returned `Cmd` is performed.
+- Messages dispatched while `update` runs (from `view`, an effect, or a subscription) are queued and processed in order, never recursively.
+- Subscriptions are reconciled by `key`: new keys start, missing keys are torn down, and a key whose `params` changed (structural equality on primitives, arrays, plain objects and `Date`s) is restarted. Put anything else — class instances, `Map`s — into the key string instead.
+- **Errors.** If `update`, `view`, `subscriptions`, a source's `start`/teardown, a `Cmd.effect`, or a `perform`ed task fails, the runtime calls `onError(error, { step, msg })` if you supplied one, otherwise rethrows. The model is left as it was before the failing step. A throwing `init` always propagates from `element`.
+- `stop()` tears down every subscription, aborts the program's `AbortSignal`, and ignores later `dispatch` calls.
 
-## Web Applications
+## Examples
 
-The runtime is intentionally UI-framework independent.
-
-A browser application can use model observers to render:
-
-``` ts
-const runtime = createRuntime(program);
-
-runtime.subscribe(model => {
-  document.body.innerHTML = render(model);
-});
-
-runtime.start();
-```
-
-DOM events become messages:
-
-``` ts
-button.addEventListener("click", () => {
-  runtime.dispatch({
-    type: "increment",
-  });
-});
-```
-
-## APIs and Server Applications
-
-The same architecture works for server applications. An incoming HTTP
-request can be translated into a message:
-
-``` ts
-runtime.dispatch({
-  type: "http/requestReceived",
-  requestId,
-  method,
-  path,
-});
-```
-
-The update function can then produce effects for persistence,
-authentication, HTTP responses, or other infrastructure operations.
-
-This keeps HTTP, persistence, authentication, queues, and other
-infrastructure outside the application's pure state-transition logic.
-
-## Testing
-
-Pure update functions are straightforward to test because they require
-no mocks or infrastructure.
-
-Using Vitest:
-
-``` ts
-import {
-  describe,
-  expect,
-  it,
-} from "vitest";
-
-describe("update", () => {
-  it("increments the counter", () => {
-    const model = {
-      count: 0,
-    };
-
-    const result = update(
-      model,
-      {
-        type: "increment",
-      },
-    );
-
-    expect(result.model).toEqual({
-      count: 1,
-    });
-
-    expect(result.effects).toEqual([]);
-  });
-});
-```
-
-Effects can also be tested as data:
-
-``` ts
-it("requests a save", () => {
-  const result = update(
-    {
-      count: 10,
-    },
-    {
-      type: "save",
-    },
-  );
-
-  expect(result.effects).toEqual([
-    {
-      type: "save",
-      count: 10,
-    },
-  ]);
-});
-```
-
-No database, HTTP server, filesystem, or mocking framework is necessary
-to test the application's decision-making logic.
-
-## Recommended Project Structure
-
-``` text
-src/
-├── domain/
-│   ├── todo.ts
-│   └── user.ts
-│
-├── application/
-│   ├── model.ts
-│   ├── msg.ts
-│   ├── effect.ts
-│   ├── subscription.ts
-│   ├── update.ts
-│   └── subscriptions.ts
-│
-├── infrastructure/
-│   ├── effects/
-│   │   ├── todo.ts
-│   │   ├── auth.ts
-│   │   └── logging.ts
-│   │
-│   ├── subscriptions/
-│   │   ├── timer.ts
-│   │   └── process.ts
-│   │
-│   └── persistence/
-│       └── todo-repository.ts
-│
-└── main.ts
-```
-
-The application describes what needs to happen. Infrastructure
-determines how it happens.
-
-## Design Principles
-
-### State changes only through messages
-
-External code should not modify the model directly.
-
-### Update functions should be pure
-
-Given the same model and message, `update` should return the same model
-and effects.
-
-### Effects should be data
-
-Prefer:
-
-``` ts
-{
-  type: "todo/save",
-  todo,
-}
-```
-
-over embedding an opaque function in the effect.
-
-Data-based effects are easier to inspect, test, log, serialize, and
-reason about.
-
-### Infrastructure should interpret effects
-
-The application describes intent. Infrastructure decides whether that
-means SQLite, PostgreSQL, an HTTP service, or an in-memory
-implementation.
-
-### Long-lived listeners should be subscriptions
-
-Use effects for operations that happen once. Use subscriptions for
-things that remain active until the application no longer requires them.
-
-### Messages are sequential; effects may be concurrent
-
-The runtime serializes model transitions while allowing asynchronous
-work to happen concurrently.
-
-## Core API
-
-The package exposes the following core types:
-
-``` ts
-Program<
-  Model,
-  Msg,
-  Effect,
-  Subscription,
-  Flags
->
-
-Runtime<
-  Model,
-  Msg,
-  Flags
->
-
-Update<
-  Model,
-  Msg,
-  Effect
->
-
-UpdateResult<
-  Model,
-  Effect
->
-
-EffectHandler<
-  Effect,
-  Msg
->
-
-Subscriptions<
-  Model,
-  Subscription
->
-
-SubscriptionHandler<
-  Subscription,
-  Msg
->
-
-SubscriptionStrategy<
-  Subscription
->
-
-Dispatch<Msg>
-
-Unsubscribe
-```
-
-The primary runtime factory is:
-
-``` ts
-createRuntime(program)
-```
-
-Along with update-result helpers:
-
-``` ts
-none(model)
-
-withEffect(model, effect)
-
-withEffects(model, effects)
-```
-
-## Runtime Guarantees
-
-The runtime is designed around a small set of guarantees:
-
-1.  `update` is never executed concurrently.
-2.  Messages are processed in dispatch order.
-3.  Effects run only after their state transition completes.
-4.  Effects may execute concurrently.
-5.  Effect results re-enter the application as messages.
-6.  Subscriptions are derived from the current model.
-7.  Subscription lifecycles are managed automatically.
-8.  Stopping the runtime aborts cancellable effects and active
-    subscriptions.
-9.  Application state changes only through `update`.
-
-These guarantees allow application logic to remain deterministic even
-when the surrounding environment is highly asynchronous.
-
-## Philosophy
-
-The package deliberately provides **architecture rather than
-infrastructure**.
-
-It does not know about:
-
--   React
--   Express
--   Hono
--   databases
--   HTTP clients
--   authentication
--   queues
--   logging frameworks
--   persistence libraries
-
-Those concerns belong at the edges of the application.
-
-The package provides the mechanism for connecting those edges to a pure
-application core.
-
-The result is an architecture where the center of the application is a
-predictable, testable state machine and side effects are explicit values
-interpreted at its boundaries.
+[`examples/`](./examples) contains a counter, a search-box child, and a parent app composing it, runnable under Node with `pnpm run examples`. They are type-checked with the tests but not published.
 
 ## License
 
-MIT
+Apache-2.0

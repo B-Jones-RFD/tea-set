@@ -5,7 +5,10 @@ node_modules
 pnpm-lock.yaml
 pnpm-workspace.yaml
 tsconfig.json
-tsup.config.ts
+tsdown.config.ts
 .env
 .prettierignore
 .prettierrc
+tests
+examples
+tsconfig.test.json
