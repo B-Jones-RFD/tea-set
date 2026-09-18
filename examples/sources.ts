@@ -2,7 +2,7 @@
 // and only started by the runtime, which also stops and restarts it as its
 // params change.
 
-import { Sub } from 'tea-set'
+import { Sub } from '@b-jones-rfd/tea-set'
 
 /** Tick every `ms` milliseconds. The interval is part of the identity via params. */
 export const everyMs = <Msg>(

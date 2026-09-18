@@ -8,8 +8,8 @@ import {
   translate,
   updateChild,
   assertNever,
-} from 'tea-set'
-import type { Dispatch, Program, Translator } from 'tea-set'
+} from '@b-jones-rfd/tea-set'
+import type { Dispatch, Program, Translator } from '@b-jones-rfd/tea-set'
 import * as SearchBox from './search-box.ts'
 import type { User } from './http.ts'
 

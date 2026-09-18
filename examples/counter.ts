@@ -1,7 +1,7 @@
 // counter.ts — a single module: Model, Msg, init, update, subscriptions, view.
 
-import { Cmd, Sub, assertNever } from 'tea-set'
-import type { Dispatch, Program } from 'tea-set'
+import { Cmd, Sub, assertNever } from '@b-jones-rfd/tea-set'
+import type { Dispatch, Program } from '@b-jones-rfd/tea-set'
 import { everyMs } from './sources.ts'
 
 export type Model = {

@@ -2,7 +2,7 @@
 // returns a Task; nothing happens until the runtime performs the Cmd it is
 // turned into. The "server" here is an in-memory stand-in for `fetch`.
 
-import { Task } from 'tea-set'
+import { Task } from '@b-jones-rfd/tea-set'
 
 export type User = { readonly id: string; readonly name: string }
 export type HttpError =

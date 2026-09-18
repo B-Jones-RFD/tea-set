@@ -1,7 +1,7 @@
 // run.ts — a Node smoke test: runs the counter and the app with console views.
 //   pnpm run examples   (= pnpm run build && node examples/run.ts)
 
-import { element, Internal } from 'tea-set'
+import { element, Internal } from '@b-jones-rfd/tea-set'
 import * as Counter from './counter.ts'
 import * as App from './app.ts'
 import type * as SearchBox from './search-box.ts'

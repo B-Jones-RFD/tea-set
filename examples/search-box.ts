@@ -13,8 +13,8 @@ import {
   Internal,
   raise,
   assertNever,
-} from 'tea-set'
-import type { ChildMsg, Dispatch, Result } from 'tea-set'
+} from '@b-jones-rfd/tea-set'
+import type { ChildMsg, Dispatch, Result } from '@b-jones-rfd/tea-set'
 import { searchUsers } from './http.ts'
 import type { HttpError, User } from './http.ts'
 import { onKeyDown } from './sources.ts'
