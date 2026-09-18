@@ -1,6 +1,6 @@
 {
   "name": "@b-jones-rfd/tea-set",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Utilities for writing programs in The Elm Architecture in TypeScript",
   "private": false,
   "main": "./dist/index.js",

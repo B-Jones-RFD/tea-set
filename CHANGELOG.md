@@ -1,5 +1,11 @@
 # @b-jones-rfd/tea-set
 
+## 1.0.1
+
+### Patch Changes
+
+- b4e8fcc: Test updated publishing config
+
 ## 1.0.0
 
 ### Major Changes
