@@ -1,5 +1,11 @@
 # @b-jones-rfd/tea-set
 
+## 2.0.0
+
+### Major Changes
+
+- 7660f66: Revision 2 of the api
+
 ## 1.0.1
 
 ### Patch Changes
